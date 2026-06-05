@@ -1,0 +1,21 @@
+=================================================================
+ RELATÓRIO DO EXPERIMENTO DE TREINAMENTO - [BINARIO]
+ Executado em: 04/06/2026 às 22:48:10
+=================================================================
+
+1. DISTRIBUIÇÃO DAS CLASSES NO CONJUNTO DE TREINO
+-----------------------------------------------------------------
+Classe  Antes do Bal.  Após Bal. (Final)
+ATTACK        1219552              65344
+BENIGN        3732680             200000
+
+2. DESEMPENHO E CONSUMO DE HARDWARE POR ALGORITMO
+-----------------------------------------------------------------
+          Algoritmo  Tempo de Treino (s)  Uso Medio de Memoria (MB)  Pico de RAM (MB)  Uso Medio de CPU (%)  Pico de CPU (%)
+                KNN             0.039894                  10.685156         46.613281             31.540000             46.7
+        Naive Bayes             0.106598                  23.975781         70.222656             24.628571             33.3
+Logistic Regression             5.316533                  52.821691         58.488281             63.556881            100.0
+      Decision Tree             7.115478                 110.037647        121.664062             54.254362            100.0
+      Random Forest            21.778846                1739.297841       1923.613281             95.495370            100.0
+
+=================================================================

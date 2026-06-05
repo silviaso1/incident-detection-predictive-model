@@ -1,0 +1,11 @@
+data/bronze/**/*.csv
+data/bronze/**/*.parquet
+
+data/prata/**/*.parquet
+
+data/ouro/**/*.parquet
+
+modelos/**/*.pkl
+
+
+!**/.gitkeep

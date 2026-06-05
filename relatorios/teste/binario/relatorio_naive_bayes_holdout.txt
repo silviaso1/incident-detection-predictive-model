@@ -1,0 +1,15 @@
+Algoritmo: naive bayes
+Abordagem: holdout
+Tempo de Predicao: 1.1354s
+Pico RAM: 730.32 MB
+Uso Medio de CPU: 54.0%
+Pico de CPU: 84.6%
+
+              precision    recall  f1-score   support
+
+      ATTACK       0.26      0.98      0.41    522665
+      BENIGN       0.93      0.09      0.16   1599721
+
+    accuracy                           0.31   2122386
+   macro avg       0.60      0.53      0.29   2122386
+weighted avg       0.77      0.31      0.22   2122386

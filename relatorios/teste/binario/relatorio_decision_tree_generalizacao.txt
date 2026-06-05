@@ -1,0 +1,15 @@
+Algoritmo: decision tree
+Abordagem: generalizacao
+Tempo de Predicao: 0.1163s
+Pico RAM: 56.40 MB
+Uso Medio de CPU: 29.9%
+Pico de CPU: 50.0%
+
+              precision    recall  f1-score   support
+
+      ATTACK       0.84      0.96      0.90    102869
+      BENIGN       0.99      0.95      0.97    397130
+
+    accuracy                           0.95    499999
+   macro avg       0.92      0.95      0.93    499999
+weighted avg       0.96      0.95      0.96    499999

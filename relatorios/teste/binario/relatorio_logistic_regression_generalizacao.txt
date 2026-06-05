@@ -1,0 +1,15 @@
+Algoritmo: logistic regression
+Abordagem: generalizacao
+Tempo de Predicao: 0.0267s
+Pico RAM: 11.48 MB
+Uso Medio de CPU: 17.9%
+Pico de CPU: 35.7%
+
+              precision    recall  f1-score   support
+
+      ATTACK       0.25      0.90      0.39    102869
+      BENIGN       0.92      0.30      0.45    397130
+
+    accuracy                           0.43    499999
+   macro avg       0.59      0.60      0.42    499999
+weighted avg       0.78      0.43      0.44    499999
