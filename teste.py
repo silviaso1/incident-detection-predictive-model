@@ -154,19 +154,28 @@ def calcular_e_salvar(nome_clean, y_real, y_pred, classes, sufixo, tempo_pred, p
     classes_presentes_ids = np.unique(np.concatenate([y_real, y_pred]))
     classes_presentes_nomes = [classes[i] for i in classes_presentes_ids]
 
-    # Matriz gráfica limpa
     gerar_matriz(y_pred, y_real, nome_clean + sufixo, classes, pasta_cm_graficos)
 
     print(f"\n[Relatório - {nome_clean.upper()}]")
-    relatorio = classification_report(y_real, y_pred, target_names=classes_presentes_nomes, zero_division=0)
-    print(relatorio)
+    relatorio_dict = classification_report(y_real, y_pred, target_names=classes_presentes_nomes, zero_division=0, output_dict=True)
+    relatorio_texto = classification_report(y_real, y_pred, target_names=classes_presentes_nomes, zero_division=0)
+    print(relatorio_texto)
 
     nome_base = f"relatorio_{nome_clean.replace(' ', '_')}{sufixo}"
-    with open(pasta_relatorios / f"{nome_base}.txt", 'w', encoding='utf-8') as f:
-        f.write(f"Algoritmo: {nome_clean}\nAbordagem: {sufixo[1:]}\n")
-        f.write(f"Tempo de Predicao: {tempo_pred:.4f}s\nPico RAM: {pico_ram:.2f} MB\n")
-        f.write(f"Uso Medio de CPU: {media_cpu:.1f}%\nPico de CPU: {pico_cpu:.1f}%\n\n")
-        f.write(relatorio)
+    
+    df_rep = pd.DataFrame(relatorio_dict).transpose().reset_index()
+    df_rep.rename(columns={'index': 'Metrica_Classe'}, inplace=True)
+    
+    df_meta = pd.DataFrame([{
+        'Metrica_Classe': 'METRICAS_HARDWARE',
+        'precision': f"Tempo Predicao: {tempo_pred:.4f}s",
+        'recall': f"Pico RAM: {pico_ram:.2f} MB",
+        'f1-score': f"Uso Medio CPU: {media_cpu:.1f}%",
+        'support': f"Pico CPU: {pico_cpu:.1f}%"
+    }])
+    
+    df_final_report = pd.concat([df_rep, df_meta], ignore_index=True)
+    df_final_report.to_csv(pasta_relatorios / f"{nome_base}.csv", index=False, encoding='utf-8')
 
     return {
         "Algoritmo": nome_clean,
@@ -181,26 +190,6 @@ def calcular_e_salvar(nome_clean, y_real, y_pred, classes, sufixo, tempo_pred, p
         "Pico de CPU (%)": pico_cpu
     }
 
-
-def gerar_matriz(y_pred, y, nome_algoritmo, classes, pasta_cm_graficos: Path):
-    cm = confusion_matrix(y, y_pred)
-    classes_presentes_ids = np.unique(np.concatenate([y, y_pred]))
-    classes_presentes_nomes = [classes[i] for i in classes_presentes_ids]
-    
-    qtd_classes = len(classes_presentes_nomes)
-    largura = max(8, 2 + (np.sqrt(qtd_classes) * 4))
-    altura = max(6, 1 + (np.sqrt(qtd_classes) * 3.5))
-
-    fig, ax = plt.subplots(figsize=(largura, altura))
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=classes_presentes_nomes)
-    disp.plot(cmap='Blues', values_format='d', xticks_rotation=45, ax=ax)
-    
-    plt.title(f"Matriz de Confusao - {nome_algoritmo.upper()}\n", fontsize=11, weight='bold')
-    plt.tight_layout()
-    
-    nome_img = f"matriz_confusao_{nome_algoritmo.replace(' ', '_')}.png"
-    plt.savefig(pasta_cm_graficos / nome_img, dpi=300)
-    plt.close()
 
 def gerar_matriz(y_pred, y, nome_algoritmo, classes, pasta_cm_graficos: Path):
     cm = confusion_matrix(y, y_pred)
@@ -298,6 +287,7 @@ def gerar_graficos_performance(df_resultados: pd.DataFrame, pasta_perf_graficos:
     plt.tight_layout()
     plt.savefig(pasta_perf_graficos / "consumo_medio_cpu_comparacao.png", dpi=300)
     plt.close()
+
 
 modelos_arquivos = [
     "modelo_decision_tree.pkl",
@@ -404,8 +394,9 @@ if __name__ == '__main__':
         print(df_resultados.sort_values(by="F1-Score", ascending=False).to_string(index=False))
         print("="*80)
 
-        df_resultados.to_csv(PASTA_RELATORIOS / "metricas_comparativas_teste.csv", index=False, encoding="utf-8")
-        print(f"-> Resumo comparativo das métricas salvo em CSV: metricas_comparativas_teste.csv")
+        nome_arquivo_csv = f"metricas_comparativas_teste{sufixo_relatorio}.csv"
+        df_resultados.to_csv(PASTA_RELATORIOS / nome_arquivo_csv, index=False, encoding="utf-8")
+        print(f"-> Resumo comparativo das métricas salvo em CSV: {nome_arquivo_csv}")
 
         gerar_graficos_performance(df_resultados, PASTA_PERF_GRAFICOS, sufixo_relatorio)
         print(f"\nAvaliação concluída. Todos os gráficos individuais salvos com sucesso em: {PASTA_PERF_GRAFICOS}")

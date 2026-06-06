@@ -31,7 +31,6 @@ def gerar_relatorio_e_print(df_antes_count, df_depois, df_teste, tipo_alvo):
     print(f"{'TOTAL DE LINHAS':<22} | {total_antes:<16,} | {len(df_depois):<16,} | {len(df_teste):<16,}")
     print("="*88)
 
-    # Exportar csv de relatório interno da camada Gold
     pasta_relatorios = Path("data") / "ouro" / tipo_alvo / "relatorios"
     pasta_relatorios.mkdir(parents=True, exist_ok=True)
     contagem_treino.write_csv(pasta_relatorios / "relatorio_treino_final.csv")
@@ -53,31 +52,27 @@ def main():
         print(f"Erro: Arquivos necessários não encontrados em {PRATA_DIR}. Rode o bronze.py primeiro.")
         sys.exit(1)
 
-    print(f"\n{'='*70}\n INICIANDO PROCESSO: SILVER ➔ GOLD [{args.tipo.upper()}]\n{'='*70}")
+    print(f"\n{'='*70}\n INICIANDO PROCESSO: PRATA ➔ OURO [{args.tipo.upper()}]\n{'='*70}")
 
-    # Carregando dados no modo Lazy para manter performance nativa do Polars Engine
     lf_teste = pl.scan_parquet(path_teste)
     lf_treino = pl.scan_parquet(path_treino)
 
-    # Identificando colunas de assinatura numérica (Ignorando a coluna target 'Label')
+    
     colunas_assinatura = [c for c in lf_teste.collect_schema().names() if c != "Label"]
 
-    # Extraindo assinaturas únicas de teste sem alterar os tipos numéricos primitivos
     lf_assinaturas_teste = lf_teste.select(colunas_assinatura).unique()
 
     print("  -> Contabilizando volumetria original antes da purificação...")
     df_antes_count = lf_treino.group_by("Label").agg(pl.len().alias("count")).collect(streaming=True)
 
     print("  -> Executando Anti-Join Nativo para expurgar sobreposições do Treino...")
-    # O join mantém a tipagem correta de floats/ints eliminando inconsistências matemáticas
     lf_treino_purificado = lf_treino.join(lf_assinaturas_teste, on=colunas_assinatura, how="anti").unique()
     lf_teste = lf_teste.unique()
 
-    # Coletando os DataFrames finais através do streaming engine
     df_teste_final = lf_teste.collect(streaming=True)
     df_treino_final = lf_treino_purificado.collect(streaming=True)
 
-    # Gravando na Camada Ouro (Gold)
+
     output_gold_teste = GOLD_DIR / "teste_final_gold.parquet"
     output_gold_treino = GOLD_DIR / "treino_final_gold.parquet"
 
@@ -87,7 +82,6 @@ def main():
     print(f"-> Dataset Ouro de Teste gravado em: {output_gold_teste}")
     print(f"-> Dataset Ouro de Treino gravado em: {output_gold_treino}")
 
-    # Impressão do Relatório do TCC estruturado e geração dos CSVs
     gerar_relatorio_e_print(df_antes_count, df_treino_final, df_teste_final, args.tipo)
 
 if __name__ == "__main__":

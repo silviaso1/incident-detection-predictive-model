@@ -22,7 +22,9 @@
 - python teste.py --tipo binario
 - python teste.py --tipo multiclasse
 
+streamlit run dashboard.py
+
 # Bases
 
 - Testes: Network Intrusion dataset(CIC-IDS- 2017)
-- Treinamento: 
+- Treinamento: CIC -IDS - Collection
