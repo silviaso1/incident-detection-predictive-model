@@ -37,11 +37,12 @@ def gerar_relatorio_e_print(df_antes_count, df_depois, df_teste, tipo_alvo):
     contagem_teste.write_csv(pasta_relatorios / "relatorio_teste_final.csv")
 
 def main():
-    parser = argparse.ArgumentParser(description="Pipeline Prata para Gold - Anti-Join de Alta Fidelidade")
+    parser = argparse.ArgumentParser(description="Pipeline Prata para Gold - Anti-Join de Alta Fidelidade Consistente")
     parser.add_argument("--tipo", choices=["binario", "multiclasse"], required=True, help="Tipo de base a consolidar")
     args = parser.parse_args()
 
-    PRATA_DIR = Path("data") / "prata" / args.tipo
+    # IMPORTANTE: Vamos sempre ler da pasta multiclasse da prata para garantir que os dados de origem sejam os mesmos!
+    PRATA_DIR = Path("data") / "prata" / "multiclasse"
     GOLD_DIR = Path("data") / "ouro" / args.tipo
     GOLD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -49,7 +50,7 @@ def main():
     path_treino = PRATA_DIR / "treino_collection_intermediario.parquet"
 
     if not path_teste.exists() or not path_treino.exists():
-        print(f"Erro: Arquivos necessários não encontrados em {PRATA_DIR}. Rode o bronze.py primeiro.")
+        print(f"Erro: Alerta! Rode o primeiro script com '--tipo multiclasse' primeiro para gerar a base de referência.")
         sys.exit(1)
 
     print(f"\n{'='*70}\n INICIANDO PROCESSO: PRATA ➔ OURO [{args.tipo.upper()}]\n{'='*70}")
@@ -57,9 +58,8 @@ def main():
     lf_teste = pl.scan_parquet(path_teste)
     lf_treino = pl.scan_parquet(path_treino)
 
-    
+    # Identifica colunas de assinatura (recursos numéricos)
     colunas_assinatura = [c for c in lf_teste.collect_schema().names() if c != "Label"]
-
     lf_assinaturas_teste = lf_teste.select(colunas_assinatura).unique()
 
     print("  -> Contabilizando volumetria original antes da purificação...")
@@ -69,9 +69,24 @@ def main():
     lf_treino_purificado = lf_treino.join(lf_assinaturas_teste, on=colunas_assinatura, how="anti").unique()
     lf_teste = lf_teste.unique()
 
+    
+    if args.tipo == "binario":
+       
+        df_antes_count = df_antes_count.with_columns(
+            pl.when(pl.col("Label") == "BENIGN").then(pl.lit("BENIGN")).otherwise(pl.lit("ATTACK")).alias("Label")
+        ).group_by("Label").agg(pl.col("count").sum())
+
+    
+        lf_treino_purificado = lf_treino_purificado.with_columns(
+            pl.when(pl.col("Label") == "BENIGN").then(pl.lit("BENIGN")).otherwise(pl.lit("ATTACK")).alias("Label")
+        )
+     
+        lf_teste = lf_teste.with_columns(
+            pl.when(pl.col("Label") == "BENIGN").then(pl.lit("BENIGN")).otherwise(pl.lit("ATTACK")).alias("Label")
+        )
+
     df_teste_final = lf_teste.collect(streaming=True)
     df_treino_final = lf_treino_purificado.collect(streaming=True)
-
 
     output_gold_teste = GOLD_DIR / "teste_final_gold.parquet"
     output_gold_treino = GOLD_DIR / "treino_final_gold.parquet"

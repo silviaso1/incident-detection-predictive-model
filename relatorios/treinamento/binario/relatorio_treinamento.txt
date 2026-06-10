@@ -1,21 +1,21 @@
 =================================================================
  RELATÓRIO DO EXPERIMENTO DE TREINAMENTO - [BINARIO]
- Executado em: 04/06/2026 às 22:48:10
+ Executado em: 08/06/2026 às 11:38:29
 =================================================================
 
 1. DISTRIBUIÇÃO DAS CLASSES NO CONJUNTO DE TREINO
 -----------------------------------------------------------------
 Classe  Antes do Bal.  Após Bal. (Final)
-ATTACK        1219552              65344
-BENIGN        3732680             200000
+ATTACK         172349             130653
+BENIGN         527651             400000
 
 2. DESEMPENHO E CONSUMO DE HARDWARE POR ALGORITMO
 -----------------------------------------------------------------
-          Algoritmo  Tempo de Treino (s)  Uso Medio de Memoria (MB)  Pico de RAM (MB)  Uso Medio de CPU (%)  Pico de CPU (%)
-                KNN             0.039894                  10.685156         46.613281             31.540000             46.7
-        Naive Bayes             0.106598                  23.975781         70.222656             24.628571             33.3
-Logistic Regression             5.316533                  52.821691         58.488281             63.556881            100.0
-      Decision Tree             7.115478                 110.037647        121.664062             54.254362            100.0
-      Random Forest            21.778846                1739.297841       1923.613281             95.495370            100.0
+    Algoritmo  Tempo de Treino (s)  Uso Medio de Memoria (MB)  Pico de RAM (MB)  Uso Medio de CPU (%)  Pico de CPU (%)
+     LightGBM             2.111038                  51.241477         65.285156             87.002174            100.0
+      XGBoost             2.677783                  43.384404         59.156250             90.060714            100.0
+Decision Tree            11.289273                  63.456773         66.394531             27.480519             84.6
+  Extra Trees            19.914070                 190.938953        284.593750             94.616379            100.0
+Random Forest            32.666472                 167.514393        201.921875             94.468848            100.0
 
 =================================================================

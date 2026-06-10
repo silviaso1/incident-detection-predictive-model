@@ -19,13 +19,11 @@ from memory_profiler import memory_usage
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.tree import DecisionTreeClassifier
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.naive_bayes import GaussianNB
-from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier, ExtraTreesClassifier
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
 
 from imblearn.over_sampling import SMOTE
-from imblearn.under_sampling import RandomUnderSampler
 
 
 def carregar_dados_parquet(caminho_arquivo: Path) -> pd.DataFrame:
@@ -58,10 +56,10 @@ class MonitorHardware:
         self._ativo = False
         if self._thread:
             self._thread.join()
-        
+
         if not self.historico_cpu:
             return 0.0, 0.0
-            
+
         pico_cpu = max(self.historico_cpu)
         media_cpu = statistics.mean(self.historico_cpu)
         return media_cpu, pico_cpu
@@ -81,7 +79,7 @@ def treinar_modelo(nome: str, modelo, x_train: np.ndarray, y_train: np.ndarray) 
 
     uso_memoria = memory_usage(treinar, interval=0.1)
     media_cpu, pico_cpu = monitor_cpu.parar()
-    
+
     pico_ram = max(uso_memoria) - min(uso_memoria)
     media_ram = statistics.mean(uso_memoria) - min(uso_memoria)
     tempo_treino = resultados_internos.get('tempo', 0)
@@ -103,10 +101,10 @@ def salvar_relatorios_finais(resultados_df: pd.DataFrame, distribuicao_df: pd.Da
     caminho_csv_hardware = pasta_relatorios / "metricas_hardware.csv"
     caminho_csv_classes = pasta_relatorios / "distribuicao_classes.csv"
     caminho_txt = pasta_relatorios / "relatorio_treinamento.txt"
-    
+
     resultados_df.to_csv(caminho_csv_hardware, index=False, encoding="utf-8")
     distribuicao_df.to_csv(caminho_csv_classes, index=False, encoding="utf-8")
-    
+
     print(f"-> Métricas de hardware salvas em CSV: {caminho_csv_hardware.name}")
     print(f"-> Distribuição de classes salva em CSV: {caminho_csv_classes.name}")
 
@@ -115,17 +113,17 @@ def salvar_relatorios_finais(resultados_df: pd.DataFrame, distribuicao_df: pd.Da
         f.write(f" RELATÓRIO DO EXPERIMENTO DE TREINAMENTO - [{tipo_alvo.upper()}]\n")
         f.write(f" Executado em: {datetime.now().strftime('%d/%m/%Y às %H:%M:%S')}\n")
         f.write("=" * 65 + "\n\n")
-        
+
         f.write("1. DISTRIBUIÇÃO DAS CLASSES NO CONJUNTO DE TREINO\n")
         f.write("-" * 65 + "\n")
         f.write(distribuicao_df.to_string(index=False))
         f.write("\n\n")
-        
+
         f.write("2. DESEMPENHO E CONSUMO DE HARDWARE POR ALGORITMO\n")
         f.write("-" * 65 + "\n")
         f.write(resultados_df.sort_values(by="Tempo de Treino (s)").to_string(index=False))
         f.write("\n\n" + "=" * 65 + "\n")
-        
+
     print(f"-> Relatório textual consolidado salvo em: {caminho_txt.name}")
 
 
@@ -160,9 +158,9 @@ def main():
     print("[2] Usar amostra de 1.000.000 de linhas")
     print("[3] Usar amostra de 500.000 de linhas")
     print("[4] Usar amostra de 100.000 de linhas")
-    
+
     opcaos_sample = input("Escolha uma opção (Padrão=1): ").strip()
-    
+
     if opcaos_sample == "2" and len(df) > 1000000:
         df = df.sample(n=1000000, random_state=42)
     elif opcaos_sample == "3" and len(df) > 500000:
@@ -193,49 +191,84 @@ def main():
     print("\n" + "-" * 45)
     print(" MENU DE REBALANCEAMENTO DA BASE DE TREINO")
     print("-" * 45)
+
     if args.tipo == "multiclasse":
         print("-[1] Manter desbalanceado")
-        print("-[2] Aplicar técnica Híbrida (RUS nas grandes e SMOTE leve nas pequenas)")
+        print("-[2] Limitar BENIGN ate 1.500.000 (Undersampling) + SMOTE nas minoritárias")
         escolha_bal = input("Escolha uma opção (Padrão=1): ").strip()
 
         if escolha_bal == "2":
-            print("\n> Aplicando rebalanceamento híbrido multiclasse...")
+            idx_benign = mapeamento_classes.index("BENIGN")
+            teto_benign = 1200000
+            
+            # --- PASSO 1: Undersampling focado exclusivamente na classe BENIGN ---
+            print(f"\n> Verificando teto limite da classe BENIGN ({teto_benign:,} amostras)...")
+            
+            indices_benign = np.where(y_train == idx_benign)[0]
+            indices_ataques = np.where(y_train != idx_benign)[0]
+            
+            if len(indices_benign) > teto_benign:
+                print(f"  -> Classe BENIGN reduzida de {len(indices_benign):,} para {teto_benign:,}")
+                
+                np.random.seed(42)
+                indices_benign_reduzidos = np.random.choice(indices_benign, size=teto_benign, replace=False)
+                indices_finais = np.concatenate([indices_benign_reduzidos, indices_ataques])
+                
+                if isinstance(x_train, pd.DataFrame):
+                    x_train = x_train.iloc[indices_finais].reset_index(drop=True)
+                    y_train = y_train.iloc[indices_finais].reset_index(drop=True)
+                else:
+                    x_train = x_train[indices_finais]
+                    y_train = y_train[indices_finais]
+            else:
+                print(f"  -> Classe BENIGN possui {len(indices_benign):,} amostras (Abaixo do teto). Nenhuma redução necessária.")
+
+            # --- PASSO 2: SMOTE regular nas classes que sobraram abaixo do piso ---
+            print("\n> Aplicando SMOTE nas classes minoritárias...")
             contagem_classes = y_train.value_counts().to_dict()
-            teto_amostras = 200000
-            estrategia_rus = {classe: min(qtd, teto_amostras) for classe, qtd in contagem_classes.items()}
-            rus = RandomUnderSampler(sampling_strategy=estrategia_rus, random_state=42)
-            x_train, y_train = rus.fit_resample(x_train, y_train)
-            
-            contagem_pos_rus = y_train.value_counts().to_dict()
             piso_amostras = 20000
-            menor_classe_atual = min(contagem_pos_rus.values())
-            k_neighbors = min(5, max(1, menor_classe_atual - 1))
-            estrategia_smote = {classe: max(qtd, piso_amostras) for classe, qtd in contagem_pos_rus.items()}
-            
-            try:
-                smote = SMOTE(sampling_strategy=estrategia_smote, k_neighbors=k_neighbors, random_state=42)
-                x_train, y_train = smote.fit_resample(x_train, y_train)
-                print("  -> Balanceamento híbrido (RUS + SMOTE) concluído!")
-            except Exception as e:
-                print(f"  -> SMOTE ignorado: {e}. Mantendo ajuste Under-sampling.")
+
+            esg_smote = {
+                classe: max(qtd, piso_amostras)
+                for classe, qtd in contagem_classes.items()
+                if qtd < piso_amostras
+            }
+
+            if esg_smote:
+                menor_classe = min(contagem_classes.values())
+                k_neighbors = min(5, max(1, menor_classe - 1))
+
+                print(f"  -> Classes que receberão SMOTE: {list(esg_smote.keys())}")
+                print(f"  -> k_neighbors utilizado: {k_neighbors}")
+
+                try:
+                    smote = SMOTE(sampling_strategy=esg_smote, k_neighbors=k_neighbors, random_state=42)
+                    x_train, y_train = smote.fit_resample(x_train, y_train)
+                    print("  -> SMOTE concluído! Classes grandes e BENIGN tratadas preservadas.")
+                except Exception as e:
+                    print(f"  -> SMOTE falhou: {e}. Mantendo dados antigos.")
+            else:
+                print("  -> Nenhuma classe abaixo do piso definido para SMOTE.")
+
     else:
         print("-[1] Manter desbalanceado")
         print("-[2] Aplicar técnica Proporcional Estrita (Evita Overfitting Binário)")
         escolha_bal = input("Escolha uma opção (Padrão=1): ").strip()
 
         if escolha_bal == "2":
+            from imblearn.under_sampling import RandomUnderSampler
             print("\n> Aplicando rebalanceamento proporcional binário...")
             contagem_classes = y_train.value_counts().to_dict()
             idx_benign = mapeamento_classes.index("BENIGN")
             idx_attack = mapeamento_classes.index("ATTACK")
-            
+
             total_linhas_treino = len(y_train)
             prop_benign = contagem_classes[idx_benign] / total_linhas_treino
             prop_attack = contagem_classes[idx_attack] / total_linhas_treino
-            
-            teto_benign = 200000
+
+            teto_benign = 400000
             teto_attack = int((teto_benign * prop_attack) / prop_benign)
-            
+
             rus = RandomUnderSampler(sampling_strategy={idx_benign: teto_benign, idx_attack: teto_attack}, random_state=42)
             x_train, y_train = rus.fit_resample(x_train, y_train)
             print("  -> Balanceamento proporcional concluído!")
@@ -246,10 +279,10 @@ def main():
 
     joblib.dump((x_test_scaled, y_test, list(x.columns)), PASTA_MODELOS / 'holdout_teste.pkl')
     joblib.dump(scaler, PASTA_MODELOS / 'scaler.pkl')
-    
+
     valores, contagens = np.unique(y_train, return_counts=True)
     distribuicao_depois = dict(zip(valores, contagens))
-    
+
     dados_distribuicao = []
     print("\n" + "="*70)
     print(" DISTRIBUIÇÃO DAS CLASSES NO CONJUNTO DE TREINO FINAL")
@@ -268,11 +301,11 @@ def main():
     print(f"[Matriz] Dimensões finais de treino: Amostras={len(y_train):,} | Features={x_train_scaled.shape[1]}")
 
     modelos = {
-        "Decision Tree": DecisionTreeClassifier(class_weight='balanced', random_state=42),
-        "Random Forest": RandomForestClassifier(n_estimators=50, n_jobs=-1, class_weight='balanced', random_state=42),
-        "KNN": KNeighborsClassifier(n_neighbors=5, n_jobs=-1), 
-        "Naive Bayes": GaussianNB(),
-        "Logistic Regression": LogisticRegression(max_iter=1000, class_weight='balanced', random_state=42)
+        "Decision Tree": DecisionTreeClassifier(random_state=42),
+        "Random Forest": RandomForestClassifier(n_estimators=50, n_jobs=-1, random_state=42),
+        "Extra Trees": ExtraTreesClassifier(n_estimators=50, n_jobs=-1, random_state=42),
+        "XGBoost": XGBClassifier(n_estimators=50, max_depth=6, n_jobs=-1, random_state=42, eval_metric='mlogloss'),
+        "LightGBM": LGBMClassifier(n_estimators=50, max_depth=6, n_jobs=-1, random_state=42, verbosity=-1)
     }
 
     resultados = []
@@ -303,7 +336,7 @@ def main():
 
     plt.figure(figsize=(9, 5))
     df_tempo = df_resultados.sort_values(by="Tempo de Treino (s)")
-    ax1 = sns.barplot(x="Tempo de Treino (s)", y="Algoritmo", data=df_tempo, palette="magma", hue="Algoritmo", legend=False)
+    ax1 = sns.barplot(x="Tempo de Treino (s)", y="Algoritmo", data=df_tempo, hue="Algoritmo", palette="magma", legend=False)
     plt.title("Tempo de Treinamento por Algoritmo", fontsize=11, weight='bold')
     plt.xlabel("Segundos (s)")
     plt.ylabel("")
@@ -315,7 +348,7 @@ def main():
 
     plt.figure(figsize=(9, 5))
     df_pico = df_resultados.sort_values(by="Pico de RAM (MB)", ascending=False)
-    ax2 = sns.barplot(x="Pico de RAM (MB)", y="Algoritmo", data=df_pico, palette="viridis", hue="Algoritmo", legend=False)
+    ax2 = sns.barplot(x="Pico de RAM (MB)", y="Algoritmo", data=df_pico, hue="Algoritmo", palette="viridis", legend=False)
     plt.title("Pico de Memória RAM por Algoritmo", fontsize=11, weight='bold')
     plt.xlabel("Megabytes (MB)")
     plt.ylabel("")
@@ -327,7 +360,7 @@ def main():
 
     plt.figure(figsize=(9, 5))
     df_media = df_resultados.sort_values(by="Uso Medio de Memoria (MB)", ascending=False)
-    ax3 = sns.barplot(x="Uso Medio de Memoria (MB)", y="Algoritmo", data=df_media, palette="crest", hue="Algoritmo", legend=False)
+    ax3 = sns.barplot(x="Uso Medio de Memoria (MB)", y="Algoritmo", data=df_media, hue="Algoritmo", palette="crest", legend=False)
     plt.title("Consumo Médio de Memória RAM por Algoritmo", fontsize=11, weight='bold')
     plt.xlabel("Megabytes (MB)")
     plt.ylabel("")
@@ -339,7 +372,7 @@ def main():
 
     plt.figure(figsize=(9, 5))
     df_cpu_pico = df_resultados.sort_values(by="Pico de CPU (%)", ascending=False)
-    ax4 = sns.barplot(x="Pico de CPU (%)", y="Algoritmo", data=df_cpu_pico, palette="flare", hue="Algoritmo", legend=False)
+    ax4 = sns.barplot(x="Pico de CPU (%)", y="Algoritmo", data=df_cpu_pico, hue="Algoritmo", palette="flare", legend=False)
     plt.title("Pico de Uso de CPU por Algoritmo", fontsize=11, weight='bold')
     plt.xlabel("Porcentagem de Uso (%)")
     plt.ylabel("")
@@ -351,7 +384,7 @@ def main():
 
     plt.figure(figsize=(9, 5))
     df_cpu_med = df_resultados.sort_values(by="Uso Medio de CPU (%)", ascending=False)
-    ax5 = sns.barplot(x="Uso Medio de CPU (%)", y="Algoritmo", data=df_cpu_med, palette="vlag", hue="Algoritmo", legend=False)
+    ax5 = sns.barplot(x="Uso Medio de CPU (%)", y="Algoritmo", data=df_cpu_med, hue="Algoritmo", palette="vlag", legend=False)
     plt.title("Consumo Médio de CPU por Algoritmo", fontsize=11, weight='bold')
     plt.xlabel("Porcentagem de Uso (%)")
     plt.ylabel("")
@@ -360,7 +393,7 @@ def main():
     plt.tight_layout()
     plt.savefig(PASTA_GRAFICOS / "consumo_medio_cpu.png", dpi=300)
     plt.close()
-    
+
     print(f"\n[Sucesso] 5 Imagens estatísticas individuais salvas em: {PASTA_GRAFICOS}")
 
 

@@ -102,17 +102,20 @@ class MonitorHardware:
         self._ativo = False
         self._thread = None
 
-    def _monitorar(self):
-        psutil.cpu_percent(interval=None)
-        while self._ativo:
-            self.historico_cpu.append(psutil.cpu_percent(interval=None))
-            time.sleep(self.intervalo)
+    def abrir(self):
+        pass
 
     def iniciar(self):
         self.historico_cpu = []
         self._ativo = True
         self._thread = threading.Thread(target=self._monitorar, daemon=True)
         self._thread.start()
+
+    def _monitorar(self):
+        psutil.cpu_percent(interval=None)
+        while self._ativo:
+            self.historico_cpu.append(psutil.cpu_percent(interval=None))
+            time.sleep(self.intervalo)
 
     def parar(self):
         self._ativo = False
@@ -122,9 +125,9 @@ class MonitorHardware:
             return 0.0, 0.0
         return statistics.mean(self.historico_cpu), max(self.historico_cpu)
 
-
 def testar_modelo(nome_arquivo: str, x_dados: np.ndarray, y_dados: np.ndarray, pasta_modelos: Path, pasta_relatorios: Path, pasta_cm_graficos: Path, sufixo_relatorio: str) -> dict:
     caminho_modelo = pasta_modelos / nome_arquivo
+    
     nome_clean = nome_arquivo.replace('modelo_', '').replace('.pkl', '').replace('_', ' ')
     print(f"\n[Inferência] Avaliando modelo: {nome_clean.upper()}")
 
@@ -216,6 +219,7 @@ def gerar_graficos_performance(df_resultados: pd.DataFrame, pasta_perf_graficos:
     plt.style.use('ggplot')
     sns.set_theme(style="whitegrid", palette="muted")
 
+    # F1-Score
     plt.figure(figsize=(9, 5))
     df_f1 = df_resultados.sort_values(by="F1-Score", ascending=False)
     ax1 = sns.barplot(x='F1-Score', y='Algoritmo', data=df_f1, hue='Algoritmo', palette="viridis", legend=False)
@@ -228,6 +232,7 @@ def gerar_graficos_performance(df_resultados: pd.DataFrame, pasta_perf_graficos:
     plt.savefig(pasta_perf_graficos / "f1_score_comparacao.png", dpi=300)
     plt.close()
 
+    # Tempo de Inferência
     plt.figure(figsize=(9, 5))
     df_tempo = df_resultados.sort_values(by="Tempo Predicao (s)")
     ax2 = sns.barplot(x='Tempo Predicao (s)', y='Algoritmo', data=df_tempo, hue='Algoritmo', palette="magma", legend=False)
@@ -240,6 +245,7 @@ def gerar_graficos_performance(df_resultados: pd.DataFrame, pasta_perf_graficos:
     plt.savefig(pasta_perf_graficos / "tempo_predicao_comparacao.png", dpi=300)
     plt.close()
 
+    # Pico RAM
     plt.figure(figsize=(9, 5))
     df_ram_pico = df_resultados.sort_values(by="Pico RAM Predicao (MB)", ascending=False)
     ax3 = sns.barplot(x='Pico RAM Predicao (MB)', y='Algoritmo', data=df_ram_pico, hue='Algoritmo', palette="rocket", legend=False)
@@ -252,6 +258,7 @@ def gerar_graficos_performance(df_resultados: pd.DataFrame, pasta_perf_graficos:
     plt.savefig(pasta_perf_graficos / "pico_ram_comparacao.png", dpi=300)
     plt.close()
 
+    # RAM Média
     plt.figure(figsize=(9, 5))
     df_ram_med = df_resultados.sort_values(by="Uso Medio de RAM (MB)", ascending=False)
     ax4 = sns.barplot(x='Uso Medio de RAM (MB)', y='Algoritmo', data=df_ram_med, hue='Algoritmo', palette="crest", legend=False)
@@ -264,6 +271,7 @@ def gerar_graficos_performance(df_resultados: pd.DataFrame, pasta_perf_graficos:
     plt.savefig(pasta_perf_graficos / "consumo_medio_ram_comparacao.png", dpi=300)
     plt.close()
 
+    # Pico CPU
     plt.figure(figsize=(9, 5))
     df_cpu_pico = df_resultados.sort_values(by="Pico de CPU (%)", ascending=False)
     ax5 = sns.barplot(x='Pico de CPU (%)', y='Algoritmo', data=df_cpu_pico, hue='Algoritmo', palette="flare", legend=False)
@@ -276,6 +284,7 @@ def gerar_graficos_performance(df_resultados: pd.DataFrame, pasta_perf_graficos:
     plt.savefig(pasta_perf_graficos / "pico_cpu_comparacao.png", dpi=300)
     plt.close()
     
+    # CPU Média
     plt.figure(figsize=(9, 5))
     df_cpu_med = df_resultados.sort_values(by="Uso Medio de CPU (%)", ascending=False)
     ax6 = sns.barplot(x='Uso Medio de CPU (%)', y='Algoritmo', data=df_cpu_med, hue='Algoritmo', palette="vlag", legend=False)
@@ -291,10 +300,10 @@ def gerar_graficos_performance(df_resultados: pd.DataFrame, pasta_perf_graficos:
 
 modelos_arquivos = [
     "modelo_decision_tree.pkl",
-    "modelo_knn.pkl",
-    "modelo_logistic_regression.pkl",
-    "modelo_naive_bayes.pkl",
-    "modelo_random_forest.pkl"
+    "modelo_random_forest.pkl",
+    "modelo_extra_trees.pkl",
+    "modelo_xgboost.pkl",
+    "modelo_lightgbm.pkl"
 ]
 
 if __name__ == '__main__':
@@ -325,7 +334,7 @@ if __name__ == '__main__':
     sufixo_relatorio = ""
 
     if not (PASTA_MODELOS / 'classes.pkl').exists() or not (PASTA_MODELOS / 'scaler.pkl').exists():
-        print(f"Erro Crítico: Arquivos 'classes.pkl' ou 'scaler.pkl' ausentes em {PASTA_MODELOS}")
+        print(f"Erro Crítico: Arquivos 'classes.pkl' ou 'scaler.pkl' ausentes in {PASTA_MODELOS}")
         sys.exit(1)
         
     classes = joblib.load(PASTA_MODELOS / 'classes.pkl')
@@ -381,7 +390,7 @@ if __name__ == '__main__':
 
         if resp == 'y' or not resp:
             try:
-                res_metrics = testar_modelo(arquivo, x, y, PASTA_MODELOS, PASTA_RELATORIOS, PASTA_CM_GRAFICOS, sufixo_relatorio)
+                res_metrics = testar_modelo(arquivo, x, y, PASTA_MODELOS, PASTA_RELATORIOS, PASTA_PERF_GRAFICOS, sufixo_relatorio)
                 resultados.append(res_metrics)
             except Exception as e:
                 print(f"  Erro crítico ao avaliar o modelo {arquivo}: {e}")

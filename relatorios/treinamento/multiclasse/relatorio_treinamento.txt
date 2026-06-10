@@ -1,27 +1,27 @@
 =================================================================
  RELATÓRIO DO EXPERIMENTO DE TREINAMENTO - [MULTICLASSE]
- Executado em: 04/06/2026 às 22:55:49
+ Executado em: 08/06/2026 às 11:18:46
 =================================================================
 
 1. DISTRIBUIÇÃO DAS CLASSES NO CONJUNTO DE TREINO
 -----------------------------------------------------------------
       Classe  Antes do Bal.  Após Bal. (Final)
-      BENIGN        3732870             200000
+      BENIGN        3732754            1200000
       BOTNET         101182             101182
- BRUTE-FORCE          71730              71730
-        DDOS         755290             200000
-         DOS         256108             200000
-INFILTRATION          32239              32239
-    PORTSCAN           1010              20000
+ BRUTE-FORCE          71770              71770
+        DDOS         755238             755238
+         DOS         256234             256234
+INFILTRATION          32243              32243
+    PORTSCAN           1008              20000
   WEB-ATTACK           1803              20000
 
 2. DESEMPENHO E CONSUMO DE HARDWARE POR ALGORITMO
 -----------------------------------------------------------------
-          Algoritmo  Tempo de Treino (s)  Uso Medio de Memoria (MB)  Pico de RAM (MB)  Uso Medio de CPU (%)  Pico de CPU (%)
-                KNN             0.130311                  87.807884        161.238281             27.787500             41.7
-        Naive Bayes             0.404093                  36.579427        148.464844             36.535714             66.7
-      Decision Tree            21.273952                 109.057741        238.718750             28.501628             83.3
-      Random Forest            59.365369                1288.876595       1437.343750             97.789808            100.0
-Logistic Regression           240.844635                 257.626584        460.128906             49.398949            100.0
+    Algoritmo  Tempo de Treino (s)  Uso Medio de Memoria (MB)  Pico de RAM (MB)  Uso Medio de CPU (%)  Pico de CPU (%)
+     LightGBM            46.327180                 627.848360        716.285156             98.820421            100.0
+      XGBoost            80.271972                 424.819853        452.980469             98.889384            100.0
+Decision Tree            85.697123                 284.421371        343.855469             33.570224            100.0
+  Extra Trees           141.727211                1518.858196       2356.710938             98.509632            100.0
+Random Forest           218.388281                1876.816991       2220.539062             97.572762            100.0
 
 =================================================================
