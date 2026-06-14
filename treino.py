@@ -252,26 +252,37 @@ def main():
 
     else:
         print("-[1] Manter desbalanceado")
-        print("-[2] Aplicar técnica Proporcional Estrita (Evita Overfitting Binário)")
+        print("-[2] Aplicar técnica Híbrida Customizada (Aproximação controlada das classes)")
         escolha_bal = input("Escolha uma opção (Padrão=1): ").strip()
 
         if escolha_bal == "2":
             from imblearn.under_sampling import RandomUnderSampler
-            print("\n> Aplicando rebalanceamento proporcional binário...")
+            print("\n> Aplicando rebalanceamento híbrido binário...")
             contagem_classes = y_train.value_counts().to_dict()
             idx_benign = mapeamento_classes.index("BENIGN")
             idx_attack = mapeamento_classes.index("ATTACK")
 
-            total_linhas_treino = len(y_train)
-            prop_benign = contagem_classes[idx_benign] / total_linhas_treino
-            prop_attack = contagem_classes[idx_attack] / total_linhas_treino
+            qtd_benign_original = contagem_classes[idx_benign]
+            qtd_attack_original = contagem_classes[idx_attack]
 
-            teto_benign = 400000
-            teto_attack = int((teto_benign * prop_attack) / prop_benign)
+            # Alvos para trazer as classes para mais perto de forma suave:
+            # Reduzimos BENIGN para um teto fixo e aproximamos o ATTACK com SMOTE para manter um balanceamento saudável (ex: ~60% / 40%)
+            teto_benign = min(1600000, int(qtd_benign_original * 0.5)) # Desce o benigno de forma segura
+            alvo_attack = int(teto_benign * 0.65)                     # Eleva o ataque proporcionalmente mais perto da classe limpa
 
-            rus = RandomUnderSampler(sampling_strategy={idx_benign: teto_benign, idx_attack: teto_attack}, random_state=42)
-            x_train, y_train = rus.fit_resample(x_train, y_train)
-            print("  -> Balanceamento proporcional concluído!")
+            # Passo 1: Undersampling na classe majoritária se necessário
+            if qtd_benign_original > teto_benign:
+                print(f"  -> Aplicando Undersampling: BENIGN reduzida de {qtd_benign_original:,} para {teto_benign:,}")
+                rus = RandomUnderSampler(sampling_strategy={idx_benign: teto_benign, idx_attack: qtd_attack_original}, random_state=42)
+                x_train, y_train = rus.fit_resample(x_train, y_train)
+            
+            # Passo 2: SMOTE na classe minoritária para aproximá-las de verdade
+            if qtd_attack_original < alvo_attack:
+                print(f"  -> Aplicando SMOTE: ATTACK expandido de {qtd_attack_original:,} para {alvo_attack:,}")
+                smote = SMOTE(sampling_strategy={idx_attack: alvo_attack}, random_state=42)
+                x_train, y_train = smote.fit_resample(x_train, y_train)
+
+            print("  -> Balanceamento de aproximação binária concluído!")
 
     scaler = StandardScaler()
     x_train_scaled = scaler.fit_transform(x_train)

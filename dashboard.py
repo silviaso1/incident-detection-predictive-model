@@ -85,16 +85,21 @@ BASE_TREINO_MULTI = os.path.join(_ROOT, "relatorios", "treinamento", "multiclass
 BASE_TREINO_BIN   = os.path.join(_ROOT, "relatorios", "treinamento", "binario")
 BASE_TESTE_MULTI  = os.path.join(_ROOT, "relatorios", "teste", "multiclasse")
 BASE_TESTE_BIN    = os.path.join(_ROOT, "relatorios", "teste", "binario")
+
 BASE_OURO_MULTI   = os.path.join(_ROOT, "data", "ouro", "multiclasse", "relatorios")
-BASE_OURO_BIN     = os.path.join(_ROOT, "data", "ouro", "binário", "relatórios")
+BASE_OURO_BIN     = os.path.join(_ROOT, "data", "ouro", "binario", "relatorios")
+BASE_OURO_BIN_ALT = os.path.join(_ROOT, "data", "ouro", "binário", "relatórios")
 
 ALGORITMOS_LABEL = {
-    "decision_tree":       "Decision Tree",
-    "logistic_regression": "Logistic Regression",
-    "random_forest":       "Random Forest",
-    "naive_bayes":         "Naive Bayes",
-    "knn":                 "KNN",
+    "decision_tree":   "Decision Tree",
+    "extra_trees":     "Extra Trees",
+    "lightgbm":        "LightGBM",
+    "random_forest":   "Random Forest",
+    "xgboost":         "XGBoost",
 }
+
+if "auc_roc_extraido" not in st.session_state:
+    st.session_state["auc_roc_extraido"] = None
 
 @st.cache_data
 def carregar_distribuicao(tipo: str) -> pl.DataFrame:
@@ -116,30 +121,81 @@ def carregar_metricas_comparativas(tipo: str, abordagem: str) -> pl.DataFrame:
     )
     return pl.read_csv(os.path.join(base, nome))
 
-@st.cache_data
 def carregar_relatorio_classes(tipo: str, abordagem: str, alg_key: str) -> pl.DataFrame:
     base = BASE_TESTE_MULTI if tipo == "multiclasse" else BASE_TESTE_BIN
-    path = os.path.join(base, f"relatorio_{alg_key}_{abordagem}.csv")
+    
+    nome_procurado = f"relatorio_{alg_key}_{abordagem}.csv".lower()
+    arquivo_real = None
+    
+    if os.path.exists(base):
+        for f in os.listdir(base):
+            if f.lower() == nome_procurado:
+                arquivo_real = f
+                break
+                
+    if not arquivo_real:
+        variacoes = [
+            f"relatorio_{alg_key}_{abordagem}.csv",
+            f"relatorio_{ALGORITMOS_LABEL[alg_key].replace(' ', '_')}_{abordagem}.csv"
+        ]
+        for v in variacoes:
+            if os.path.exists(os.path.join(base, v)):
+                arquivo_real = v
+                break
+        if not arquivo_real:
+            arquivo_real = variacoes[0]
+        
+    path = os.path.join(base, arquivo_real)
+    
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Arquivo não localizado no disco: {arquivo_real}")
+        
     df = pl.read_csv(path)
-    excluir = {"accuracy", "macro avg", "weighted avg", "METRICAS_HARDWARE"}
-    df = df.filter(~pl.col("Metrica_Classe").is_in(excluir))
-    df = df.with_columns([
-        pl.col("precision").cast(pl.Float64),
-        pl.col("recall").cast(pl.Float64),
-        pl.col("f1-score").cast(pl.Float64),
-        pl.col("support").cast(pl.Float64),
-    ])
-    return df.rename({
-        "Metrica_Classe": "Classe",
-        "precision":      "Precisao",
-        "recall":         "Recall",
-        "f1-score":       "F1-Score",
-        "support":        "Suporte",
-    })
+    
+    # Padroniza e limpa colunas
+    df = df.rename({c: c.strip() for c in df.columns})
+    col_classe = df.columns[0]
+    
+    linha_roc = df.filter(pl.col(col_classe).str.contains("METRICAS_HARDWARE"))
+    auc_valor = "N/A"
+    if not linha_roc.is_empty():
+
+        for col_name in df.columns:
+            celula_str = str(linha_roc[col_name][0])
+            if "AUC ROC:" in celula_str:
+                auc_valor = celula_str.split("AUC ROC:")[-1].strip()
+                break
+    
+    st.session_state["auc_roc_extraido"] = auc_valor
+  
+    excluir = {"accuracy", "macro avg", "weighted avg"}
+    df = df.filter(~pl.col(col_classe).is_in(excluir))
+    df = df.filter(~pl.col(col_classe).str.contains("METRICAS_HARDWARE"))
+    
+
+    colunas_validas = []
+    for col in ["precision", "recall", "f1-score", "support"]:
+        if col in df.columns:
+            df = df.with_columns(pl.col(col).cast(pl.String).str.strip_chars().cast(pl.Float64, strict=False))
+            colunas_validas.append(col)
+            
+    df = df.select([col_classe] + colunas_validas)
+    
+    novos_nomes = {col_classe: "Classe"}
+    if "precision" in df.columns: novos_nomes["precision"] = "Precisao"
+    if "recall" in df.columns:    novos_nomes["recall"] = "Recall"
+    if "f1-score" in df.columns:  novos_nomes["f1-score"] = "F1-Score"
+    if "support" in df.columns:   novos_nomes["support"] = "Suporte"
+    
+    return df.rename(novos_nomes)
 
 @st.cache_data
 def carregar_volumetria_ouro(tipo: str) -> dict:
-    base = BASE_OURO_MULTI if tipo == "multiclasse" else BASE_OURO_BIN
+    if tipo == "multiclasse":
+        base = BASE_OURO_MULTI
+    else:
+        base = BASE_OURO_BIN if os.path.exists(BASE_OURO_BIN) else BASE_OURO_BIN_ALT
+        
     return {
         "treino": pl.read_csv(os.path.join(base, "relatorio_treino_final.csv")),
         "teste":  pl.read_csv(os.path.join(base, "relatorio_teste_final.csv")),
@@ -151,12 +207,15 @@ with f_escopo1:
 with f_escopo2:
     board_abordagem = st.radio("Abordagem:", ["holdout", "generalização"], horizontal=True)
 
+tipo_pasta = "multiclasse" if tipo_classificacao == "multiclasse" else "binario"
+abordagem_arquivo = "holdout" if board_abordagem == "holdout" else "generalizacao"
+
 st.markdown(f"<hr style='margin-top:-5px;margin-bottom:20px;border-color:{COR_DIVISA};'>", unsafe_allow_html=True)
 
-df_distribuicao  = carregar_distribuicao(tipo_classificacao)
-df_hw_treino     = carregar_hardware_treino(tipo_classificacao)
-df_metricas_comp = carregar_metricas_comparativas(tipo_classificacao, board_abordagem)
-vol_ouro         = carregar_volumetria_ouro(tipo_classificacao)
+df_distribuicao  = carregar_distribuicao(tipo_pasta)
+df_hw_treino     = carregar_hardware_treino(tipo_pasta)
+df_metricas_comp = carregar_metricas_comparativas(tipo_pasta, abordagem_arquivo)
+vol_ouro         = carregar_volumetria_ouro(tipo_pasta)
 
 df_dist_p = df_distribuicao.to_pandas()
 
@@ -203,9 +262,23 @@ with col_sel:
 
 algoritmo_key = next(k for k, v in ALGORITMOS_LABEL.items() if v == algoritmo_label)
 
+df_rc_p = None
+erro_rc  = None
+try:
+    df_rc   = carregar_relatorio_classes(tipo_pasta, abordagem_arquivo, algoritmo_key)
+    df_rc_p = df_rc.to_pandas()
+    for col in ["Precisao", "Recall", "F1-Score"]:
+        if col in df_rc_p.columns:
+            df_rc_p[col] = df_rc_p[col].round(2)
+except Exception as e:
+    erro_rc = str(e)
+
 st.markdown(f"<p style='font-size:11px;color:#94a3b8;text-transform:uppercase;font-weight:600;margin-bottom:6px;'>Treino</p>", unsafe_allow_html=True)
 
-d_hw = df_hw_treino.filter(pl.col("Algoritmo") == algoritmo_label).to_dicts()
+d_hw = df_hw_treino.filter((pl.col("Algoritmo") == algoritmo_label) | (pl.col("Algoritmo") == algoritmo_key)).to_dicts()
+if not d_hw:
+    d_hw = df_hw_treino.filter(pl.col("Algoritmo").str.to_lowercase() == algoritmo_label.lower()).to_dicts()
+
 if d_hw:
     d_hw = d_hw[0]
     t1, t2, t3, t4, t5 = st.columns(5)
@@ -219,26 +292,29 @@ else:
 
 st.markdown(f"<p style='font-size:11px;color:#94a3b8;text-transform:uppercase;font-weight:600;margin-top:10px;margin-bottom:6px;'>Teste</p>", unsafe_allow_html=True)
 
-alg_lower = algoritmo_label.lower()
-d_pred = df_metricas_comp.filter(pl.col("Algoritmo") == alg_lower).to_dicts()
+d_pred = df_metricas_comp.filter(pl.col("Algoritmo") == algoritmo_key).to_dicts()
 if not d_pred:
     d_pred = df_metricas_comp.filter(pl.col("Algoritmo") == algoritmo_label).to_dicts()
+if not d_pred:
+    d_pred = df_metricas_comp.filter(pl.col("Algoritmo").str.to_lowercase() == algoritmo_label.lower()).to_dicts()
 
 if d_pred:
     d_pred = d_pred[0]
-    m1, m2, m3, m4, m5 = st.columns(5)
+
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
     with m1: st.metric("Acurácia Geral",             f"{round(d_pred['Acuracia'] * 100, 2)}%")
     with m2: st.metric("Precisão Ponderada",         f"{round(d_pred['Precisao'], 2)}")
     with m3: st.metric("Recall Ponderado",           f"{round(d_pred['Recall'], 2)}")
     with m4: st.metric("F1-Score Ponderado",         f"{round(d_pred['F1-Score'], 2)}")
-    with m5: st.metric("Tempo de Teste",             f"{round(d_pred['Tempo Predicao (s)'], 2)} s")
+    
+    auc_display = st.session_state.get("auc_roc_extraido", "N/A")
+    with m5: st.metric("Curva AUC ROC",              auc_display)
+    
+    with m6: st.metric("Tempo de Teste",             f"{round(d_pred['Tempo Predicao (s)'], 2)} s")
 else:
     st.warning(f"Métricas comparativas não encontradas para: {algoritmo_label}")
 
 st.markdown("<br>", unsafe_allow_html=True)
-
-df_all = df_metricas_comp.to_pandas()
-df_all["Algoritmo"] = df_all["Algoritmo"].str.title()
 
 col_ram, col_cpu = st.columns(2)
 
@@ -262,7 +338,6 @@ with col_ram:
             textposition='inside',
             width=0.4
         ))
-        
 
         fig_ram.add_trace(go.Bar(
             y=['Teste', 'Treino'],
@@ -276,12 +351,8 @@ with col_ram:
         ))
 
         fig_ram.update_layout(
-            template="plotly_dark",
-            paper_bgcolor=COR_CARD,
-            plot_bgcolor=COR_CARD,
-            barmode='overlay', 
-            showlegend=False,
-            height=140,      
+            template="plotly_dark", paper_bgcolor=COR_CARD, plot_bgcolor=COR_CARD,
+            barmode='overlay', showlegend=False, height=140,      
             margin=dict(l=60, r=80, t=10, b=10),
             xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
             yaxis=dict(tickfont=dict(size=12, color="#94a3b8"))
@@ -322,45 +393,32 @@ with col_cpu:
         ))
 
         fig_cpu.update_layout(
-            template="plotly_dark",
-            paper_bgcolor=COR_CARD,
-            plot_bgcolor=COR_CARD,
-            barmode='overlay',
-            showlegend=False,
-            height=140,         # Caixa bem menor
+            template="plotly_dark", paper_bgcolor=COR_CARD, plot_bgcolor=COR_CARD,
+            barmode='overlay', showlegend=False, height=140,         
             margin=dict(l=60, r=80, t=10, b=10),
-            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[0, 120]), # margem para o texto não sumir
+            xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[0, 120]), 
             yaxis=dict(tickfont=dict(size=12, color="#94a3b8"))
         )
         st.plotly_chart(fig_cpu, use_container_width=True, config={'displayModeBar': False})
     st.markdown('</div>', unsafe_allow_html=True)
 
-
-df_rc_p = None
-erro_rc  = None
-try:
-    df_rc   = carregar_relatorio_classes(tipo_classificacao, board_abordagem, algoritmo_key)
-    df_rc_p = df_rc.to_pandas()
-    for col in ["Precisao", "Recall", "F1-Score"]:
-        if col in df_rc_p.columns:
-            df_rc_p[col] = df_rc_p[col].round(2)
-except Exception as e:
-    erro_rc = str(e)
-
 st.markdown('<div class="caixa-grafico"><span class="titulo-grafico">Métricas por Classe </span>', unsafe_allow_html=True)
 if erro_rc:
-    st.error(f"Erro ao carregar relatório de classes:\n{erro_rc}")
-elif df_rc_p is not None:
+    st.warning(f"Aviso: Não foi possível carregar as classes para '{algoritmo_label}'. Erro: {erro_rc}")
+elif df_rc_p is not None and not df_rc_p.empty:
     fig_linhas = go.Figure()
-    fig_linhas.add_trace(go.Scatter(x=df_rc_p["Classe"], y=df_rc_p["Precisao"], name="Precisão",
-                                    mode='lines+markers', line=dict(color=COR_VERDE, width=2),
-                                    marker=dict(size=7)))
-    fig_linhas.add_trace(go.Scatter(x=df_rc_p["Classe"], y=df_rc_p["Recall"], name="Recall",
-                                    mode='lines+markers', line=dict(color=COR_CIANO, width=2),
-                                    marker=dict(size=7)))
-    fig_linhas.add_trace(go.Scatter(x=df_rc_p["Classe"], y=df_rc_p["F1-Score"], name="F1-Score",
-                                    mode='lines+markers', line=dict(color=COR_LARANJA, width=2),
-                                    marker=dict(size=7)))
+    if "Precisao" in df_rc_p.columns:
+        fig_linhas.add_trace(go.Scatter(x=df_rc_p["Classe"], y=df_rc_p["Precisao"], name="Precisão",
+                                        mode='lines+markers', line=dict(color=COR_VERDE, width=2),
+                                        marker=dict(size=7)))
+    if "Recall" in df_rc_p.columns:
+        fig_linhas.add_trace(go.Scatter(x=df_rc_p["Classe"], y=df_rc_p["Recall"], name="Recall",
+                                        mode='lines+markers', line=dict(color=COR_CIANO, width=2),
+                                        marker=dict(size=7)))
+    if "F1-Score" in df_rc_p.columns:
+        fig_linhas.add_trace(go.Scatter(x=df_rc_p["Classe"], y=df_rc_p["F1-Score"], name="F1-Score",
+                                        mode='lines+markers', line=dict(color=COR_LARANJA, width=2),
+                                        marker=dict(size=7)))
     fig_linhas.update_layout(
         template="plotly_dark", paper_bgcolor=COR_CARD, plot_bgcolor=COR_CARD,
         height=320, margin=dict(l=120, r=120, t=20, b=50),
@@ -369,4 +427,6 @@ elif df_rc_p is not None:
         legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
     )
     st.plotly_chart(fig_linhas, use_container_width=True, config={'displayModeBar': False})
+else:
+    st.info("Nenhum dado de classe disponível para exibir o gráfico.")
 st.markdown('</div>', unsafe_allow_html=True)

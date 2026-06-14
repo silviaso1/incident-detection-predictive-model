@@ -17,8 +17,10 @@ import psutil
 from memory_profiler import memory_usage
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score, 
-    confusion_matrix, ConfusionMatrixDisplay, classification_report
+    confusion_matrix, ConfusionMatrixDisplay, classification_report,
+    roc_curve, auc, roc_auc_score
 )
+from sklearn.preprocessing import label_binarize
 
 
 def carregar_holdout(pasta_modelos: Path) -> tuple:
@@ -95,7 +97,6 @@ def carregar_arquivos_parquet_teste(arquivos_parquet: list, colunas_treino: list
 
 
 class MonitorHardware:
-    """Classe assíncrona para mapeamento real de consumo da CPU em tempo de execução."""
     def __init__(self, intervalo=0.1):
         self.intervalo = intervalo
         self.historico_cpu = []
@@ -125,10 +126,12 @@ class MonitorHardware:
             return 0.0, 0.0
         return statistics.mean(self.historico_cpu), max(self.historico_cpu)
 
-def testar_modelo(nome_arquivo: str, x_dados: np.ndarray, y_dados: np.ndarray, pasta_modelos: Path, pasta_relatorios: Path, pasta_cm_graficos: Path, sufixo_relatorio: str) -> dict:
+
+def testar_modelo(nome_arquivo: str, x_dados: np.ndarray, y_dados: np.ndarray, pasta_modelos: Path, pasta_relatorios: Path, pasta_cm_graficos: Path, sufixo_relatorio: str) -> tuple:
     caminho_modelo = pasta_modelos / nome_arquivo
     
-    nome_clean = nome_arquivo.replace('modelo_', '').replace('.pkl', '').replace('_', ' ')
+   
+    nome_clean = nome_arquivo.replace('modelo_', '').replace('.pkl', '').replace('_', ' ').title()
     print(f"\n[Inferência] Avaliando modelo: {nome_clean.upper()}")
 
     modelo = joblib.load(caminho_modelo)
@@ -147,13 +150,15 @@ def testar_modelo(nome_arquivo: str, x_dados: np.ndarray, y_dados: np.ndarray, p
 
     inicio = time.time()
     y_pred = modelo.predict(x_dados)
+    y_proba = modelo.predict_proba(x_dados)
     fim = time.time()
     tempo_pred = fim - inicio
 
-    return calcular_e_salvar(nome_clean, y_dados, y_pred, classes, sufixo_relatorio, tempo_pred, pico_ram, media_ram, media_cpu, pico_cpu, pasta_relatorios, pasta_cm_graficos)
+    metricas_res = calcular_e_salvar(nome_clean, y_dados, y_pred, y_proba, classes, sufixo_relatorio, tempo_pred, pico_ram, media_ram, media_cpu, pico_cpu, pasta_relatorios, pasta_cm_graficos)
+    return metricas_res, y_proba
 
 
-def calcular_e_salvar(nome_clean, y_real, y_pred, classes, sufixo, tempo_pred, pico_ram, media_ram, media_cpu, pico_cpu, pasta_relatorios, pasta_cm_graficos):
+def calcular_e_salvar(nome_clean, y_real, y_pred, y_proba, classes, sufixo, tempo_pred, pico_ram, media_ram, media_cpu, pico_cpu, pasta_relatorios, pasta_cm_graficos):
     classes_presentes_ids = np.unique(np.concatenate([y_real, y_pred]))
     classes_presentes_nomes = [classes[i] for i in classes_presentes_ids]
 
@@ -164,17 +169,22 @@ def calcular_e_salvar(nome_clean, y_real, y_pred, classes, sufixo, tempo_pred, p
     relatorio_texto = classification_report(y_real, y_pred, target_names=classes_presentes_nomes, zero_division=0)
     print(relatorio_texto)
 
+    if len(classes) == 2:
+        auc_score = roc_auc_score(y_real, y_proba[:, 1])
+    else:
+        auc_score = roc_auc_score(y_real, y_proba, multi_class='ovr', average='weighted')
+
     nome_base = f"relatorio_{nome_clean.replace(' ', '_')}{sufixo}"
     
     df_rep = pd.DataFrame(relatorio_dict).transpose().reset_index()
     df_rep.rename(columns={'index': 'Metrica_Classe'}, inplace=True)
     
     df_meta = pd.DataFrame([{
-        'Metrica_Classe': 'METRICAS_HARDWARE',
+        'Metrica_Classe': 'METRICAS_HARDWARE_E_ROC',
         'precision': f"Tempo Predicao: {tempo_pred:.4f}s",
         'recall': f"Pico RAM: {pico_ram:.2f} MB",
         'f1-score': f"Uso Medio CPU: {media_cpu:.1f}%",
-        'support': f"Pico CPU: {pico_cpu:.1f}%"
+        'support': f"AUC ROC: {auc_score:.4f}"
     }])
     
     df_final_report = pd.concat([df_rep, df_meta], ignore_index=True)
@@ -186,6 +196,7 @@ def calcular_e_salvar(nome_clean, y_real, y_pred, classes, sufixo, tempo_pred, p
         "Precisao": precision_score(y_real, y_pred, average='weighted', zero_division=0),
         "Recall": recall_score(y_real, y_pred, average='weighted', zero_division=0),
         "F1-Score": f1_score(y_real, y_pred, average='weighted', zero_division=0),
+        "AUC-ROC": auc_score,
         "Tempo Predicao (s)": tempo_pred,
         "Uso Medio de RAM (MB)": media_ram,
         "Pico RAM Predicao (MB)": pico_ram,
@@ -215,86 +226,118 @@ def gerar_matriz(y_pred, y, nome_algoritmo, classes, pasta_cm_graficos: Path):
     plt.close()
 
 
-def gerar_graficos_performance(df_resultados: pd.DataFrame, pasta_perf_graficos: Path, sufixo=""):
-    plt.style.use('ggplot')
-    sns.set_theme(style="whitegrid", palette="muted")
+def gerar_curva_roc_composta(dict_probabilidades: dict, y_real, classes, pasta_graficos: Path, sufixo: str):
+    plt.figure(figsize=(9, 6))
+    sns.set_theme(style="whitegrid")
+    
+    for nome_modelo, y_proba in dict_probabilidades.items():
+        if len(classes) == 2:
+            fpr, tpr, _ = roc_curve(y_real, y_proba[:, 1])
+            roc_auc = auc(fpr, tpr)
+            plt.plot(fpr, tpr, lw=2, label=f"{nome_modelo} (AUC = {roc_auc:.4f})")
+        else:
+            y_real_bin = label_binarize(y_real, classes=range(len(classes)))
+            fpr = dict()
+            tpr = dict()
+            
+            for i in range(len(classes)):
+           
+                fpr[i], tpr[i], _ = roc_curve(y_real_bin[:, i], y_proba[:, i])
+            
+            all_fpr = np.unique(np.concatenate([fpr[i] for i in range(len(classes))]))
+            mean_tpr = np.zeros_like(all_fpr)
+            for i in range(len(classes)):
+                mean_tpr += np.interp(all_fpr, fpr[i], tpr[i])
+            mean_tpr /= len(classes)
+            
+            macro_auc = auc(all_fpr, mean_tpr)
+            plt.plot(all_fpr, mean_tpr, lw=2, label=f"{nome_modelo} (Macro AUC = {macro_auc:.4f})")
 
-    # F1-Score
-    plt.figure(figsize=(9, 5))
-    df_f1 = df_resultados.sort_values(by="F1-Score", ascending=False)
-    ax1 = sns.barplot(x='F1-Score', y='Algoritmo', data=df_f1, hue='Algoritmo', palette="viridis", legend=False)
-    plt.title("Comparação de F1-Score Ponderado", fontsize=11, weight='bold')
-    plt.xlabel("Score")
-    plt.ylabel("")
-    for container in ax1.containers:
-        ax1.bar_label(container, fmt='%.4f', padding=5, weight='bold')
+    plt.plot([0, 1], [0, 1], color='tab:gray', lw=1.5, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('Taxa de Falsos Positivos (FPR)')
+    plt.ylabel('Taxa de Verdadeiros Positivos (TPR)')
+    plt.title(f'Comparativo de Curva ROC - Experimento {sufixo.replace("_", "").upper()}', fontsize=12, weight='bold')
+    plt.legend(loc="lower right")
     plt.tight_layout()
-    plt.savefig(pasta_perf_graficos / "f1_score_comparacao.png", dpi=300)
+    
+    nome_img = f"curva_roc_comparativa{sufixo}.png"
+    plt.savefig(pasta_graficos / nome_img, dpi=300)
     plt.close()
+    print(f"\n-> Gráfico estruturado de Curva ROC unificado salvo em: {nome_img}")
 
-    # Tempo de Inferência
-    plt.figure(figsize=(9, 5))
-    df_tempo = df_resultados.sort_values(by="Tempo Predicao (s)")
-    ax2 = sns.barplot(x='Tempo Predicao (s)', y='Algoritmo', data=df_tempo, hue='Algoritmo', palette="magma", legend=False)
-    plt.title("Tempo de Inferência por Algoritmo", fontsize=11, weight='bold')
+
+def gerar_graficos_performance(df_resultados: pd.DataFrame, pasta_perf_graficos: Path, sufixo=""):
+    sns.set_theme(style="ticks")
+
+    plt.figure(figsize=(10, 5))
+    df_tempo = df_resultados.sort_values(by="Tempo Predicao (s)", ascending=False)
+    ax2 = sns.pointplot(
+        x='Tempo Predicao (s)', y='Algoritmo', data=df_tempo,
+        linestyles="--", markers="D", color="#d95f02", scale=1.2
+    )
+    plt.grid(axis='x', linestyle=':', alpha=0.6)
+    sns.despine(left=False, bottom=False)
+    plt.title("Tempo por Algoritmo", fontsize=12, weight='bold', pad=15)
     plt.xlabel("Segundos (s)")
     plt.ylabel("")
-    for container in ax2.containers:
-        ax2.bar_label(container, fmt='%.4fs', padding=5, weight='bold')
+    for i, valor in enumerate(df_tempo['Tempo Predicao (s)']):
+        ax2.text(valor, i, f' {valor:.4f}s', va='center', ha='left', weight='bold', fontsize=10)
     plt.tight_layout()
-    plt.savefig(pasta_perf_graficos / "tempo_predicao_comparacao.png", dpi=300)
+    plt.savefig(pasta_perf_graficos / f"tempo_predicao_comparacao{sufixo}.png", dpi=300)
     plt.close()
 
-    # Pico RAM
-    plt.figure(figsize=(9, 5))
-    df_ram_pico = df_resultados.sort_values(by="Pico RAM Predicao (MB)", ascending=False)
-    ax3 = sns.barplot(x='Pico RAM Predicao (MB)', y='Algoritmo', data=df_ram_pico, hue='Algoritmo', palette="rocket", legend=False)
-    plt.title("Pico de Memória RAM na Inferência", fontsize=11, weight='bold')
-    plt.xlabel("Megabytes (MB)")
-    plt.ylabel("")
+    # Perfil de Memória RAM
+    plt.figure(figsize=(10, 6))
+    df_melted_ram = df_resultados.melt(
+        id_vars=['Algoritmo'], 
+        value_vars=['Uso Medio de RAM (MB)', 'Pico RAM Predicao (MB)'],
+        var_name='Métrica', value_name='Megabytes'
+    )
+    df_melted_ram['Métrica'] = df_melted_ram['Métrica'].replace({
+        'Uso Medio de RAM (MB)': 'Consumo Médio',
+        'Pico RAM Predicao (MB)': 'Pico de Consumo'
+    })
+    ax3 = sns.barplot(
+        x='Algoritmo', y='Megabytes', hue='Métrica', 
+        data=df_melted_ram, palette=['#7570b3', '#e7298a']
+    )
+    sns.despine()
+    plt.title("Consumo de Memória RAM", fontsize=12, weight='bold', pad=15)
+    plt.xlabel("")
+    plt.ylabel("Megabytes (MB)")
+    plt.legend(frameon=True, facecolor='white', edgecolor='none')
     for container in ax3.containers:
-        ax3.bar_label(container, fmt='%.2f MB', padding=5, weight='bold')
+        ax3.bar_label(container, fmt='%.1f MB', padding=3, fontsize=9)
     plt.tight_layout()
-    plt.savefig(pasta_perf_graficos / "pico_ram_comparacao.png", dpi=300)
+    plt.savefig(pasta_perf_graficos / f"ram_perfil_comparacao{sufixo}.png", dpi=300)
     plt.close()
 
-    # RAM Média
-    plt.figure(figsize=(9, 5))
-    df_ram_med = df_resultados.sort_values(by="Uso Medio de RAM (MB)", ascending=False)
-    ax4 = sns.barplot(x='Uso Medio de RAM (MB)', y='Algoritmo', data=df_ram_med, hue='Algoritmo', palette="crest", legend=False)
-    plt.title("Consumo Médio de Memória RAM na Inferência", fontsize=11, weight='bold')
-    plt.xlabel("Megabytes (MB)")
+    # Perfil de CPU
+    plt.figure(figsize=(10, 6))
+    df_melted_cpu = df_resultados.melt(
+        id_vars=['Algoritmo'], 
+        value_vars=['Uso Medio de CPU (%)', 'Pico de CPU (%)'],
+        var_name='Métrica', value_name='Porcentagem'
+    )
+    df_melted_cpu['Métrica'] = df_melted_cpu['Métrica'].replace({
+        'Uso Medio de CPU (%)': 'Uso Médio',
+        'Pico de CPU (%)': 'Pico de Uso'
+    })
+    ax4 = sns.barplot(
+        x='Porcentagem', y='Algoritmo', hue='Métrica', 
+        data=df_melted_cpu, palette=['#66c2a5', '#fc8d62']
+    )
+    sns.despine()
+    plt.title("Uso de CPU", fontsize=12, weight='bold', pad=15)
+    plt.xlabel("Porcentagem (%)")
     plt.ylabel("")
+    plt.legend(loc='lower right', frameon=True, facecolor='white', edgecolor='none')
     for container in ax4.containers:
-        ax4.bar_label(container, fmt='%.2f MB', padding=5, weight='bold')
+        ax4.bar_label(container, fmt='%.1f%%', padding=4, fontsize=9, weight='bold')
     plt.tight_layout()
-    plt.savefig(pasta_perf_graficos / "consumo_medio_ram_comparacao.png", dpi=300)
-    plt.close()
-
-    # Pico CPU
-    plt.figure(figsize=(9, 5))
-    df_cpu_pico = df_resultados.sort_values(by="Pico de CPU (%)", ascending=False)
-    ax5 = sns.barplot(x='Pico de CPU (%)', y='Algoritmo', data=df_cpu_pico, hue='Algoritmo', palette="flare", legend=False)
-    plt.title("Pico de Uso de CPU na Inferência", fontsize=11, weight='bold')
-    plt.xlabel("Porcentagem (%)")
-    plt.ylabel("")
-    for container in ax5.containers:
-        ax5.bar_label(container, fmt='%.1f%%', padding=5, weight='bold')
-    plt.tight_layout()
-    plt.savefig(pasta_perf_graficos / "pico_cpu_comparacao.png", dpi=300)
-    plt.close()
-    
-    # CPU Média
-    plt.figure(figsize=(9, 5))
-    df_cpu_med = df_resultados.sort_values(by="Uso Medio de CPU (%)", ascending=False)
-    ax6 = sns.barplot(x='Uso Medio de CPU (%)', y='Algoritmo', data=df_cpu_med, hue='Algoritmo', palette="vlag", legend=False)
-    plt.title("Consumo Médio de CPU na Inferência", fontsize=11, weight='bold')
-    plt.xlabel("Porcentagem (%)")
-    plt.ylabel("")
-    for container in ax6.containers:
-        ax6.bar_label(container, fmt='%.1f%%', padding=5, weight='bold')
-    plt.tight_layout()
-    plt.savefig(pasta_perf_graficos / "consumo_medio_cpu_comparacao.png", dpi=300)
+    plt.savefig(pasta_perf_graficos / f"cpu_perfil_comparacao{sufixo}.png", dpi=300)
     plt.close()
 
 
@@ -325,7 +368,7 @@ if __name__ == '__main__':
     print(f" AMBIENTE DE AVALIAÇÃO DE MODELOS - [{args.tipo.upper()}]")
     print("=" * 60)
     print("[1] Experimento 1 - Holdout Interno (Validação interna de treino)")
-    print("[2] Experimento 2 - Generalização (CIC-IDS-2017 da Gold)")
+    print("[2] Experimento 2 - Generalização")
     print("=" * 60 + "\n")
 
     experimento = input("Escolha o Experimento (1 ou 2): ").strip()
@@ -380,18 +423,20 @@ if __name__ == '__main__':
         sys.exit(1)
 
     resultados = []
+    dict_probabilidades_composta = {}
     
     for arquivo in modelos_arquivos:
         if not (PASTA_MODELOS / arquivo).exists():
             continue
 
-        nome_clean = arquivo.replace('modelo_', '').replace('.pkl', '').replace('_', ' ')
-        resp = input(f"\nDeseja avaliar o modelo '{nome_clean.upper()}'? (y/n) [Default=y]: ").strip().lower()
+        nome_clean = arquivo.replace('modelo_', '').replace('.pkl', '').replace('_', ' ').title()
+        resp = input(f"\nDeseja avaliar o modelo '{nome_clean}'? (y/n) [Default=y]: ").strip().lower()
 
         if resp == 'y' or not resp:
             try:
-                res_metrics = testar_modelo(arquivo, x, y, PASTA_MODELOS, PASTA_RELATORIOS, PASTA_PERF_GRAFICOS, sufixo_relatorio)
+                res_metrics, probs = testar_modelo(arquivo, x, y, PASTA_MODELOS, PASTA_RELATORIOS, PASTA_CM_GRAFICOS, sufixo_relatorio)
                 resultados.append(res_metrics)
+                dict_probabilidades_composta[nome_clean] = probs
             except Exception as e:
                 print(f"  Erro crítico ao avaliar o modelo {arquivo}: {e}")
 
@@ -408,6 +453,7 @@ if __name__ == '__main__':
         print(f"-> Resumo comparativo das métricas salvo em CSV: {nome_arquivo_csv}")
 
         gerar_graficos_performance(df_resultados, PASTA_PERF_GRAFICOS, sufixo_relatorio)
-        print(f"\nAvaliação concluída. Todos os gráficos individuais salvos com sucesso em: {PASTA_PERF_GRAFICOS}")
+        gerar_curva_roc_composta(dict_probabilidades_composta, y, classes, PASTA_PERF_GRAFICOS, sufixo_relatorio)
+        print(f"\nAvaliação concluída. Todos os gráficos salvos com sucesso em: {PASTA_PERF_GRAFICOS}")
     else:
         print("\nNenhum modelo foi selecionado para o teste.")
