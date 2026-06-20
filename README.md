@@ -1,5 +1,5 @@
 
-# MACHINE LEARNING PARA DETECÇÃO DE CIBERATAQUES: UMA ANÁLISE DE CUSTO-BENEFÍCIO DE ALGORITMOS BASEADOS EM ÁRVORES DE DECISÃO PARA AMBIENTES COM RECURSOS LIMITADOS
+# MACHINE LEARNING PARA DETECÇÃO DE CIBERATAQUES: UMA ANÁLISE DE CUSTO-BENEFÍCIO DE ALGORITMOS BASEADOS EM ÁRVORES DE DECISÃO PARA APLICAÇÃO EM AMBIENTES COM RECURSOS LIMITADOS
 
 Este repositório contém o pipeline completo de engenharia de dados, balanceamento estatístico, treinamento e inferência para detecção de ciberataques, divididos entre abordagens **Binária** e **Multiclasse**.
 
